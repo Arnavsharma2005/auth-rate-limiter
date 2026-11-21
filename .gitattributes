@@ -1,0 +1,5 @@
+# Store text files with LF so shell scripts (mvnw, scripts/*.sh) run on Linux/macOS
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.jar binary

@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:auth}
+    username: ${DB_USER:auth}
+    password: ${DB_PASSWORD:auth-dev-password}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # Flyway creates tables; Hibernate only checks entities match them
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+auth:
+  session:
+    jwt-secret: ${JWT_SECRET:}   # at least 32 bytes; blank = random key per startup (dev only)
+    access-ttl: 15m
+    refresh-ttl: 7d
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-components: always   # shows db / redis UP or DOWN, without connection details
