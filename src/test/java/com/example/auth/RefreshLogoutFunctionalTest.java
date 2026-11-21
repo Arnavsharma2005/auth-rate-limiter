@@ -65,6 +65,17 @@ class RefreshLogoutFunctionalTest {
     }
 
     @Test
+    void replayingAUsedRefreshTokenEndsTheWholeSession() throws Exception {
+        String first = JsonPath.read(loginBody(), "$.refreshToken");
+        String second = JsonPath.read(postToken("/auth/refresh", first).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(), "$.refreshToken");
+
+        // Someone replays the used token: it must fail, and the token issued in its place must stop working too
+        postToken("/auth/refresh", first).andExpect(status().isUnauthorized());
+        postToken("/auth/refresh", second).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void logoutRevokesTheRefreshTokenAndCanBeRepeated() throws Exception {
         String refresh = JsonPath.read(loginBody(), "$.refreshToken");
 

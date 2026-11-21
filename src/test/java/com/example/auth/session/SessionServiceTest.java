@@ -29,10 +29,11 @@ class SessionServiceTest {
     private final SessionService sessions = new SessionService(jwt, store, identity);
 
     private final UserView user = new UserView(UUID.randomUUID(), "a@example.com", Role.USER);
+    private final RefreshTokenStore.Session session = new RefreshTokenStore.Session("session-1", user.id());
 
     @Test
     void startIssuesAccessTokenForTheUserAndAStoredRefreshToken() {
-        when(store.create(user.id())).thenReturn("refresh-1");
+        when(store.startSession(user.id())).thenReturn("refresh-1");
 
         TokenPair pair = sessions.start(user);
 
@@ -44,9 +45,9 @@ class SessionServiceTest {
     @Test
     void refreshUsesUpTheOldTokenAndReadsTheCurrentRole() {
         UserView promoted = new UserView(user.id(), user.email(), Role.ADMIN);
-        when(store.consume("old")).thenReturn(Optional.of(user.id()));
+        when(store.consume("old")).thenReturn(Optional.of(session));
         when(identity.find(user.id())).thenReturn(Optional.of(promoted));
-        when(store.create(user.id())).thenReturn("new");
+        when(store.issue(session.id())).thenReturn(Optional.of("new"));
 
         TokenPair pair = sessions.refresh("old");
 
@@ -60,21 +61,30 @@ class SessionServiceTest {
         when(store.consume("unknown")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> sessions.refresh("unknown")).isInstanceOf(InvalidRefreshTokenException.class);
-        verify(store, never()).create(any());
+        verify(store, never()).issue(any());
     }
 
     @Test
     void refreshForADeletedUserFails() {
-        when(store.consume("orphan")).thenReturn(Optional.of(user.id()));
+        when(store.consume("orphan")).thenReturn(Optional.of(session));
         when(identity.find(user.id())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> sessions.refresh("orphan")).isInstanceOf(InvalidRefreshTokenException.class);
-        verify(store, never()).create(any());
+        verify(store, never()).issue(any());
     }
 
     @Test
-    void endDeletesTheRefreshToken() {
+    void refreshFailsOnceTheSessionHasReachedItsMaximumAge() {
+        when(store.consume("last")).thenReturn(Optional.of(session));
+        when(identity.find(user.id())).thenReturn(Optional.of(user));
+        when(store.issue(session.id())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> sessions.refresh("last")).isInstanceOf(InvalidRefreshTokenException.class);
+    }
+
+    @Test
+    void endEndsTheSession() {
         sessions.end("some-token");
-        verify(store).delete("some-token");
+        verify(store).endSession("some-token");
     }
 }

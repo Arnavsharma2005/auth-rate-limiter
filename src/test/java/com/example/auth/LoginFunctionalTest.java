@@ -54,7 +54,8 @@ class LoginFunctionalTest {
         String refreshToken = JsonPath.read(loginBody(), "$.refreshToken");
 
         String hashedKey = "refresh:" + sha256Hex(refreshToken);
-        assertThat(redis.opsForValue().get(hashedKey)).isEqualTo(user.id().toString());
+        String sessionId = redis.opsForValue().get(hashedKey);
+        assertThat(redis.opsForValue().get("session:" + sessionId)).isEqualTo(user.id().toString());
         assertThat(redis.getExpire(hashedKey)).isPositive();
         assertThat(redis.hasKey("refresh:" + refreshToken)).isFalse();
     }
@@ -83,9 +84,19 @@ class LoginFunctionalTest {
                 .andExpect(jsonPath("$.role").value("USER"));
     }
 
+    @Test
+    void passwordThatOnlyMatchesTheFirst72BytesIsRejected() throws Exception {
+        String email = "user-" + UUID.randomUUID() + "@example.com";
+        String password = "é".repeat(36); // exactly 72 bytes
+        identity.register(email, password);
+
+        login(email, password + "x").andExpect(status().isBadRequest());
+        login(email, password).andExpect(status().isOk());
+    }
+
     private ResultActions login(String email, String password) throws Exception {
         return mvc.perform(post("/auth/login").with(clientIp)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON).characterEncoding(StandardCharsets.UTF_8)
                 .content("""
                         {"email":"%s","password":"%s"}""".formatted(email, password)));
     }

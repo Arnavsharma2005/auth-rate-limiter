@@ -52,6 +52,25 @@ class RateLimitFunctionalTest {
                 .andExpect(header().exists("Retry-After"));
     }
 
+    @Test
+    void sixthRegistrationInAMinuteGets429() throws Exception {
+        RequestPostProcessor ip = TestRequests.fromRandomIp();
+        for (int i = 1; i <= 5; i++) {
+            register(ip).andExpect(status().isCreated());
+        }
+        register(ip)
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"));
+        register(TestRequests.fromRandomIp()).andExpect(status().isCreated());
+    }
+
+    private ResultActions register(RequestPostProcessor ip) throws Exception {
+        return mvc.perform(post("/auth/register").with(ip)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"email":"user-%s@example.com","password":"correct-horse-battery"}""".formatted(UUID.randomUUID())));
+    }
+
     private ResultActions badLogin(RequestPostProcessor ip) throws Exception {
         return badLogin(ip, URI.create("/auth/login"));
     }

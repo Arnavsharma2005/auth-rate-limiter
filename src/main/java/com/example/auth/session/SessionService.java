@@ -20,9 +20,7 @@ public class SessionService {
     }
 
     public TokenPair start(UserView user) {
-        String accessToken = jwt.encode(new AccessClaims(user.id(), user.role()));
-        String refreshToken = refreshTokens.create(user.id());
-        return new TokenPair(accessToken, refreshToken, jwt.ttl().toSeconds());
+        return pair(user, refreshTokens.startSession(user.id()));
     }
 
     /** Checks signature and expiry only. No database or Redis call, so every request stays fast. */
@@ -31,18 +29,25 @@ public class SessionService {
     }
 
     /**
-     * Rotation: the old refresh token is used up and a new pair is issued.
+     * Rotation: the old refresh token is used up and a new pair is issued in the same session.
      * The role is read again from the database, so a role change applies on the next refresh.
+     * Replaying a used token ends the session (see RefreshTokenStore.consume).
      */
     public TokenPair refresh(String refreshToken) {
-        UserView user = refreshTokens.consume(refreshToken)
-                .flatMap(identity::find)
+        RefreshTokenStore.Session session = refreshTokens.consume(refreshToken)
                 .orElseThrow(InvalidRefreshTokenException::new);
-        return start(user);
+        UserView user = identity.find(session.userId()).orElseThrow(InvalidRefreshTokenException::new);
+        String next = refreshTokens.issue(session.id()).orElseThrow(InvalidRefreshTokenException::new);
+        return pair(user, next);
     }
 
-    /** Logout. Safe to call twice or with an unknown token. */
+    /** Logout: ends the session. Safe to call twice or with an unknown token. */
     public void end(String refreshToken) {
-        refreshTokens.delete(refreshToken);
+        refreshTokens.endSession(refreshToken);
+    }
+
+    private TokenPair pair(UserView user, String refreshToken) {
+        String accessToken = jwt.encode(new AccessClaims(user.id(), user.role()));
+        return new TokenPair(accessToken, refreshToken, jwt.ttl().toSeconds());
     }
 }

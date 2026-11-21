@@ -12,6 +12,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -26,11 +27,12 @@ class RefreshTokenStoreIntegrationTest {
     private final UUID userId = UUID.randomUUID();
 
     @Test
-    void createStoresOnlyTheHashWithA7DayExpiry() {
-        String token = store.create(userId);
+    void startSessionStoresOnlyTheHashWithA7DayExpiry() {
+        String token = store.startSession(userId);
 
         assertThat(token).matches("[A-Za-z0-9_-]{43}"); // 32 random bytes, URL-safe Base64
-        assertThat(redis.opsForValue().get(RefreshTokenStore.key(token))).isEqualTo(userId.toString());
+        String sessionId = redis.opsForValue().get(RefreshTokenStore.key(token));
+        assertThat(redis.opsForValue().get("session:" + sessionId)).isEqualTo(userId.toString());
         assertThat(redis.hasKey("refresh:" + token)).isFalse();
         long ttl = redis.getExpire(RefreshTokenStore.key(token));
         assertThat(ttl).isBetween(Duration.ofDays(7).minusMinutes(1).toSeconds(), Duration.ofDays(7).toSeconds());
@@ -38,28 +40,28 @@ class RefreshTokenStoreIntegrationTest {
 
     @Test
     void tokensAreUnique() {
-        assertThat(store.create(userId)).isNotEqualTo(store.create(userId));
+        assertThat(store.startSession(userId)).isNotEqualTo(store.startSession(userId));
     }
 
     @Test
     void consumeWorksExactlyOnce() {
-        String token = store.create(userId);
+        String token = store.startSession(userId);
 
-        assertThat(store.consume(token)).contains(userId);
+        assertThat(store.consume(token)).map(RefreshTokenStore.Session::userId).contains(userId);
         assertThat(store.consume(token)).isEmpty();
     }
 
     @Test
     void concurrentConsumeOfOneTokenSucceedsOnlyOnce() throws Exception {
-        String token = store.create(userId);
+        String token = store.startSession(userId);
         ExecutorService pool = Executors.newFixedThreadPool(10);
         try {
-            List<Callable<Optional<UUID>>> calls = new ArrayList<>();
+            List<Callable<Optional<RefreshTokenStore.Session>>> calls = new ArrayList<>();
             for (int i = 0; i < 10; i++) {
                 calls.add(() -> store.consume(token));
             }
             long winners = 0;
-            for (Future<Optional<UUID>> f : pool.invokeAll(calls)) {
+            for (Future<Optional<RefreshTokenStore.Session>> f : pool.invokeAll(calls)) {
                 if (f.get().isPresent()) {
                     winners++;
                 }
@@ -71,13 +73,47 @@ class RefreshTokenStoreIntegrationTest {
     }
 
     @Test
-    void deleteRevokesAndIsSafeToRepeat() {
-        String token = store.create(userId);
+    void replayingAUsedTokenEndsTheSession() {
+        String first = store.startSession(userId);
+        RefreshTokenStore.Session session = store.consume(first).orElseThrow();
+        String second = store.issue(session.id()).orElseThrow();
 
-        store.delete(token);
-        store.delete(token);
-        store.delete("never-existed");
+        assertThat(store.consume(first)).isEmpty();
+        assertThat(store.consume(second)).isEmpty();
+        assertThat(store.issue(session.id())).isEmpty();
+    }
+
+    @Test
+    void tokensNeverOutliveTheirSession() {
+        String first = store.startSession(userId);
+        RefreshTokenStore.Session session = store.consume(first).orElseThrow();
+        redis.expire("session:" + session.id(), Duration.ofSeconds(30));
+
+        String next = store.issue(session.id()).orElseThrow();
+
+        assertThat(redis.getExpire(RefreshTokenStore.key(next), TimeUnit.MILLISECONDS)).isBetween(1L, 30_000L);
+    }
+
+    @Test
+    void anEndedSessionCannotBeRefreshed() {
+        String token = store.startSession(userId);
+        String sessionId = redis.opsForValue().get(RefreshTokenStore.key(token));
+        redis.delete("session:" + sessionId); // what expiry at maxSessionAge does
 
         assertThat(store.consume(token)).isEmpty();
+        assertThat(store.issue(sessionId)).isEmpty();
+    }
+
+    @Test
+    void endSessionRevokesAndIsSafeToRepeat() {
+        String token = store.startSession(userId);
+        String sessionId = redis.opsForValue().get(RefreshTokenStore.key(token));
+
+        store.endSession(token);
+        store.endSession(token);
+        store.endSession("never-existed");
+
+        assertThat(store.consume(token)).isEmpty();
+        assertThat(redis.hasKey("session:" + sessionId)).isFalse();
     }
 }

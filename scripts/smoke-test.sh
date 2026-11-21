@@ -20,6 +20,8 @@ check "health"                       200 "$(status $BASE/actuator/health)"
 check "register"                     201 "$(status -X POST $BASE/auth/register -H "$JSON" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}")"
 check "register duplicate"           409 "$(status -X POST $BASE/auth/register -H "$JSON" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}")"
 check "register bad input"           400 "$(status -X POST $BASE/auth/register -H "$JSON" -d '{"email":"bad","password":"x"}')"
+# 73 characters, so over BCrypt's 72-byte limit
+check "register too-long password"   400 "$(status -X POST $BASE/auth/register -H "$JSON" -d "{\"email\":\"long-$EMAIL\",\"password\":\"$(printf 'a%.0s' {1..73})\"}")"
 
 LOGIN=$(curl -s -X POST $BASE/auth/login -H "$JSON" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}")
 ACCESS=$(echo "$LOGIN" | field accessToken); REFRESH=$(echo "$LOGIN" | field refreshToken)
@@ -34,8 +36,12 @@ NEW_REFRESH=$(echo "$NEW" | field refreshToken); NEW_ACCESS=$(echo "$NEW" | fiel
 check "refresh issues new pair"      yes "$([ ${#NEW_REFRESH} -eq 43 ] && [ "$NEW_REFRESH" != "$REFRESH" ] && echo yes || echo no)"
 check "new access token works"       200 "$(status $BASE/api/me -H "Authorization: Bearer $NEW_ACCESS")"
 check "old refresh token replay"     401 "$(status -X POST $BASE/auth/refresh -H "$JSON" -d "{\"refreshToken\":\"$REFRESH\"}")"
-check "logout"                       204 "$(status -X POST $BASE/auth/logout -H "$JSON" -d "{\"refreshToken\":\"$NEW_REFRESH\"}")"
-check "refresh after logout"         401 "$(status -X POST $BASE/auth/refresh -H "$JSON" -d "{\"refreshToken\":\"$NEW_REFRESH\"}")"
+# The replay ends the whole session, so the token issued in its place stops working too
+check "replay ends the session"      401 "$(status -X POST $BASE/auth/refresh -H "$JSON" -d "{\"refreshToken\":\"$NEW_REFRESH\"}")"
+
+SESSION_REFRESH=$(curl -s -X POST $BASE/auth/login -H "$JSON" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}" | field refreshToken)
+check "logout"                       204 "$(status -X POST $BASE/auth/logout -H "$JSON" -d "{\"refreshToken\":\"$SESSION_REFRESH\"}")"
+check "refresh after logout"         401 "$(status -X POST $BASE/auth/refresh -H "$JSON" -d "{\"refreshToken\":\"$SESSION_REFRESH\"}")"
 
 curl -s -o /dev/null -X POST $BASE/auth/register -H "$JSON" -d "{\"email\":\"$ADMIN\",\"password\":\"$PW\"}"
 docker compose exec -T postgres psql -q -U auth -d auth -c "UPDATE users SET role='ADMIN' WHERE email='$ADMIN'" >/dev/null
