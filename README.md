@@ -1,5 +1,7 @@
 # Auth & Rate-Limiting Service
 
+[![CI](https://github.com/Arnavsharma2005/auth-rate-limiter/actions/workflows/ci.yml/badge.svg)](https://github.com/Arnavsharma2005/auth-rate-limiter/actions/workflows/ci.yml)
+
 A Spring Boot authentication service with email/password and GitHub login, short-lived JWT access tokens, rotating refresh tokens with replay detection, role-based access, and a Redis token-bucket rate limiter on login and registration.
 
 **Stack:** Java 21 · Spring Boot 4 · Spring Security · PostgreSQL 16 · Redis 7 · Flyway · jjwt · Docker Compose · JUnit 5 · Testcontainers
@@ -20,6 +22,16 @@ Check it's up:
 ```bash
 curl localhost:8080/actuator/health   # {"status":"UP", ... "db":UP, "redis":UP}
 ```
+
+### CI and Docker image
+
+Every push and pull request runs all the tests on GitHub Actions. When they pass on `main`, the workflow publishes a Docker image to `ghcr.io/arnavsharma2005/auth-rate-limiter`, tagged `latest` and with the commit SHA. To build the image locally:
+
+```bash
+docker build -t auth-service .
+```
+
+The image only contains the app. Postgres and Redis come from the environment variables below, and `JWT_SECRET` must be set anywhere outside local development.
 
 ### Configuration
 
