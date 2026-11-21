@@ -52,6 +52,8 @@ while [ "$code" != "429" ] && [ $attempts -lt 6 ]; do
 done
 check "login rate limit within 6 attempts" 429 "$code"
 check "Retry-After header present"   yes "$(echo "$HDRS" | grep -qi '^Retry-After: [0-9]' && echo yes || echo no)"
+# %6c decodes to "l", so this is the same login endpoint and must share the same limit
+check "encoded login path also limited" 429 "$(status -X POST "$BASE/auth/%6cogin" -H "$JSON" -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}")"
 
 echo "----"; echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]

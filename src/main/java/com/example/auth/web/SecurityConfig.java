@@ -1,7 +1,6 @@
 package com.example.auth.web;
 
 import com.example.auth.identity.IdentityService;
-import com.example.auth.ratelimit.RateLimiter;
 import com.example.auth.session.SessionService;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -24,8 +23,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 class SecurityConfig {
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, SessionService sessions, RateLimiter loginRateLimiter,
-            IdentityService identity, JsonMapper json, ObjectProvider<ClientRegistrationRepository> oauthClients)
+    SecurityFilterChain securityFilterChain(HttpSecurity http, SessionService sessions, IdentityService identity, JsonMapper json, ObjectProvider<ClientRegistrationRepository> oauthClients)
             throws Exception {
         // GitHub login is switched on only when GitHub credentials are configured (see README)
         if (oauthClients.getIfAvailable() != null) {
@@ -44,7 +42,6 @@ class SecurityConfig {
                         .requestMatchers(HttpMethod.POST,
                                 "/auth/register", "/auth/login", "/auth/refresh", "/auth/logout").permitAll()
                         .anyRequest().authenticated())
-                .addFilterBefore(new LoginRateLimitFilter(loginRateLimiter), UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new JwtAuthFilter(sessions), UsernamePasswordAuthenticationFilter.class)
                 .exceptionHandling(e -> e
                         // Without this, a missing/invalid token gets 403 instead of 401

@@ -27,9 +27,11 @@ curl localhost:8080/actuator/health   # {"status":"UP", ... "db":UP, "redis":UP}
 |---|---|---|
 | `JWT_SECRET` | *(random per start)* | HMAC key for access tokens, **at least 32 bytes**. If it's unset, a random key is used and tokens stop working after a restart (dev only). |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `localhost` / `5432` / `auth` / `auth` / `auth-dev-password` | Postgres |
-| `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | Redis |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | `localhost` / `6379` / `redis-dev-password` | Redis. Docker Compose starts Redis with the same password. |
 | `SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GITHUB_CLIENT_ID` | *(unset)* | Enables GitHub login |
 | `SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GITHUB_CLIENT_SECRET` | *(unset)* | Enables GitHub login |
+
+`docker compose` publishes Postgres and Redis on `127.0.0.1` only, so other machines on your network can't reach them. The default passwords are for local development. Set `DB_PASSWORD` and `REDIS_PASSWORD` anywhere else, because write access to Redis is enough to create a session for any user.
 
 ### Enabling GitHub login
 
@@ -76,7 +78,7 @@ The new role appears in the user's next access token, after their next login or 
 POST /auth/login
    │
    ▼
-LoginRateLimitFilter ──► Redis  rl:login:<ip>   (token bucket, Lua script: atomic)
+AuthController.login: rate limit first ──► Redis  rl:login:<ip>   (token bucket, Lua script: atomic)
    │  over limit → 429 + Retry-After
    ▼
 IdentityService.checkPassword ──► Postgres users (BCrypt)
@@ -126,7 +128,7 @@ Each package exposes one service. Its internals, such as `UserEntity`, `UserRepo
 - **Logout leaves a short window.** After logout, the access token keeps working until it expires, at most 15 minutes. A denylist would close that window, but every request would then need a Redis call.
 - **Proxies.** Behind a reverse proxy every client has the proxy's IP. To fix this, configure Spring's `ForwardedHeaderFilter` to trust only your proxy.
 - **GitHub login returns JSON in the browser.** A real frontend would receive the tokens through a redirect instead.
-- **Rate limiting covers login only.** Adding it to another endpoint takes one more filter rule.
+- **Rate limiting covers login only.** The limit is checked inside the login handler, not by matching the URL, so URL variants such as `/auth/%6cogin` can't skip it. Registration isn't limited yet.
 
 ---
 
@@ -136,7 +138,7 @@ The tests are split into three levels. Every class is tagged with its level, so 
 
 | Level | What it checks | Needs Docker? | Classes |
 |---|---|---|---|
-| **Unit** (`@Tag("unit")`) | One class in isolation, with fakes or mocks. No Spring. | No | `JwtCodecTest`, `SessionServiceTest`, `LoginRateLimitFilterTest`, `GithubLoginSuccessHandlerTest` |
+| **Unit** (`@Tag("unit")`) | One class in isolation, with fakes or mocks. No Spring. | No | `JwtCodecTest`, `SessionServiceTest`, `AuthControllerLoginLimitTest`, `GithubLoginSuccessHandlerTest` |
 | **Integration** (`@IntegrationTest`) | One component against **real** Postgres or Redis (Testcontainers) | Yes | `IdentityServiceIntegrationTest`, `RefreshTokenStoreIntegrationTest`, `RedisTokenBucketIntegrationTest` |
 | **Functional** (`@FunctionalTest`) | Whole app through HTTP, the way an API client sees it | Yes | `RegisterFunctionalTest`, `LoginFunctionalTest`, `RefreshLogoutFunctionalTest`, `AdminFunctionalTest`, `RateLimitFunctionalTest`, `GithubLoginFunctionalTest` |
 
@@ -147,7 +149,7 @@ The tests are split into three levels. Every class is tagged with its level, so 
 ./mvnw test -Dgroups=functional
 ```
 
-To check a running app end to end (18 checks across every endpoint, including the 429):
+To check a running app end to end (19 checks across every endpoint, including the 429):
 
 ```bash
 ./scripts/smoke-test.sh
